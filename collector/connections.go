@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"log"
 	"time"
-
+	"net"
+	"sync"
 	"github.com/pkg/errors"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -47,10 +48,32 @@ var (
 	downloadTotal       *prometheus.GaugeVec
 	activeConnections   *prometheus.GaugeVec
 	networkTrafficTotal *prometheus.CounterVec
+	ipToHostnameCache sync.Map // 使用sync.Map, 它是线程安全的
 )
 
 type Connection struct {
 	connectionCache map[string]Connections
+}
+
+// LookupHostnameWithCache 尝试从缓存中获取主机名，如果没有找到，它会查询DNS并更新缓存
+func LookupHostnameWithCache(ip string) (string, error) {
+	// 先从缓存中尝试获取主机名
+	if hostname, ok := ipToHostnameCache.Load(ip); ok {
+		return hostname.(string), nil
+	}
+
+	// 缓存中没有找到，需要查询DNS
+	hostnames, err := net.LookupAddr(ip)
+	if err != nil {
+		return "", err // 查询失败，返回错误
+	}
+	if len(hostnames) > 0 {
+		hostname := hostnames[0]
+		ipToHostnameCache.Store(ip, hostname) // 更新缓存
+		return hostname, nil
+	}
+
+	return "", nil // 没有找到主机名，但也没有错误
 }
 
 func (c *Connection) Name() string {
@@ -97,8 +120,9 @@ func (c *Connection) Collect(config CollectConfig) error {
 			if !config.CollectDest {
 				destination = ""
 			}
-			networkTrafficTotal.WithLabelValues(connection.Metadata.SourceIP, destination, connection.Chains[0], "download").Add(float64(connection.Download) - float64(c.connectionCache[connection.ID].Download))
-			networkTrafficTotal.WithLabelValues(connection.Metadata.SourceIP, destination, connection.Chains[0], "upload").Add(float64(connection.Upload) - float64(c.connectionCache[connection.ID].Upload))
+			sourceHostName,_:= LookupHostnameWithCache(connection.Metadata.SourceIP)
+			networkTrafficTotal.WithLabelValues(connection.Metadata.SourceIP,sourceHostName, destination, connection.Chains[0], "download").Add(float64(connection.Download) - float64(c.connectionCache[connection.ID].Download))
+			networkTrafficTotal.WithLabelValues(connection.Metadata.SourceIP,sourceHostName, destination, connection.Chains[0], "upload").Add(float64(connection.Upload) - float64(c.connectionCache[connection.ID].Upload))
 			c.connectionCache[connection.ID] = connection
 			activeConnectionsMap[connection.ID] = nil
 		}
@@ -143,7 +167,7 @@ func init() {
 			Name:      "network_traffic_bytes_total",
 			Help:      "Total number of bytes downloaded/uploaded, categorized by source, destination, and policy.",
 		},
-		[]string{"source", "destination", "policy", "type"},
+		[]string{"source","source_name", "destination", "policy", "type"},
 	)
 
 	prometheus.MustRegister(uploadTotal, downloadTotal, activeConnections, networkTrafficTotal)
