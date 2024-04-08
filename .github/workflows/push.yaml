@@ -17,7 +17,7 @@ jobs:
   # See also https://docs.docker.com/docker-hub/builds/
   push:
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'zxh326' }}
+    if: ${{ github.repository_owner == 'gaojice' }}
     permissions:
       packages: write
       contents: read
@@ -40,7 +40,7 @@ jobs:
       - name: Push image
         run: |
           IMAGE_ID=ghcr.io/${{ github.repository_owner }}/$IMAGE_NAME
-          DOCKER_IMAGE_ID=zzde/$IMAGE_NAME
+          DOCKER_IMAGE_ID=gaojice/$IMAGE_NAME
 
           # Change all uppercase to lowercase
           IMAGE_ID=$(echo $IMAGE_ID | tr '[A-Z]' '[a-z]')
