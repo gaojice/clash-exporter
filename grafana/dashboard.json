@@ -1872,21 +1872,19 @@
       {
         "current": {
           "selected": true,
-          "text": [
-            "All"
-          ],
-          "value": [
-            "$__all"
-          ]
+          "text": "All",
+          "value": "All"
         },
         "datasource": {
           "type": "prometheus",
           "uid": "edhte8o06jw8wc"
         },
         "definition": "label_values(clash_network_traffic_bytes_total,source_name)",
-        "hide": 0,
-        "includeAll": true,
-        "multi": true,
+        "description": "来源主机名称",
+        "hide": 2,
+        "includeAll": false,
+        "label": "来源主机",
+        "multi": false,
         "name": "source_name",
         "options": [],
         "query": {
@@ -1903,13 +1901,13 @@
     ]
   },
   "time": {
-    "from": "now-1h",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "",
   "title": "Clash dashboard",
   "uid": "-pEeJqf4k",
-  "version": 18,
+  "version": 20,
   "weekStart": ""
 }
