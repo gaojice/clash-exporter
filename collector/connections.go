@@ -70,6 +70,10 @@ func LookupHostnameWithCache(ip string) (string, error) {
 	// 缓存中没有找到或条目已过期，执行DNS查询
 	hostnames, err := net.LookupAddr(ip)
 	if err != nil {
+		ipToHostnameCache.Store(ip, cacheEntry{
+			hostname:  "",
+			expiresAt: time.Now().Add(10 * time.Minute),
+		})
 		return "", err
 	}
 	if len(hostnames) > 0 {
