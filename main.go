@@ -34,7 +34,7 @@ func main() {
 	config := collector.CollectConfig{
 		CollectDest:    collectDest,
 		CollectTracing: CollectTracing,
-		ClashHost:      getEnvOrDefault("CLASH_HOST", "127.0.0.1:9090"),
+		ClashHost:      getEnvOrDefault("CLASH_HOST", "openwrt.lan:9090"),
 		ClashToken:     getEnvOrDefault("CLASH_TOKEN", ""),
 	}
 	http.Handle("/metrics", promhttp.Handler())

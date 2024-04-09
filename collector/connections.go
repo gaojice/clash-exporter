@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
 	"net"
 	"sync"
+	"time"
+
 	"github.com/pkg/errors"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -42,13 +43,17 @@ type Connections struct {
 	Rule        string    `json:"rule"`
 	RulePayload string    `json:"rulePayload"`
 }
+type cacheEntry struct {
+	hostname  string    // 缓存的值，这里是IP地址解析出的主机名
+	expiresAt time.Time // 条目的过期时间
+}
 
 var (
 	uploadTotal         *prometheus.GaugeVec
 	downloadTotal       *prometheus.GaugeVec
 	activeConnections   *prometheus.GaugeVec
 	networkTrafficTotal *prometheus.CounterVec
-	ipToHostnameCache sync.Map // 使用sync.Map, 它是线程安全的
+	ipToHostnameCache   sync.Map // 使用sync.Map, 它是线程安全的
 )
 
 type Connection struct {
@@ -56,24 +61,48 @@ type Connection struct {
 }
 
 // LookupHostnameWithCache 尝试从缓存中获取主机名，如果没有找到，它会查询DNS并更新缓存
+// 修改LookupHostnameWithCache函数来检查缓存条目是否过期
 func LookupHostnameWithCache(ip string) (string, error) {
-	// 先从缓存中尝试获取主机名
-	if hostname, ok := ipToHostnameCache.Load(ip); ok {
-		return hostname.(string), nil
+	if entry, ok := ipToHostnameCache.Load(ip); ok {
+		cachedEntry := entry.(cacheEntry)
+		return cachedEntry.hostname, nil
 	}
-
-	// 缓存中没有找到，需要查询DNS
+	// 缓存中没有找到或条目已过期，执行DNS查询
 	hostnames, err := net.LookupAddr(ip)
 	if err != nil {
-		return "", err // 查询失败，返回错误
+		return "", err
 	}
 	if len(hostnames) > 0 {
 		hostname := hostnames[0]
-		ipToHostnameCache.Store(ip, hostname) // 更新缓存
+		// 创建一个新的缓存条目，设置过期时间为10分钟后
+		ipToHostnameCache.Store(ip, cacheEntry{
+			hostname:  hostname,
+			expiresAt: time.Now().Add(10 * time.Minute),
+		})
 		return hostname, nil
 	}
+	return "", nil
+}
 
-	return "", nil // 没有找到主机名，但也没有错误
+// StartCacheCleanup 定期清理过期的缓存条目
+func StartCacheCleanup(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	go func() {
+		for {
+			<-ticker.C
+			now := time.Now()
+			ipToHostnameCache.Range(func(key, value interface{}) bool {
+				// 检查每个条目是否过期
+				entry := value.(cacheEntry)
+				if now.After(entry.expiresAt) {
+					// 如果过期了，就删除
+					ipToHostnameCache.Delete(key)
+					log.Println("清理ip-hostname缓存:", key)
+				}
+				return true // 继续遍历
+			})
+		}
+	}()
 }
 
 func (c *Connection) Name() string {
@@ -104,7 +133,6 @@ func (c *Connection) Collect(config CollectConfig) error {
 		uploadTotal.WithLabelValues().Set(float64(m.UploadTotal))
 		downloadTotal.WithLabelValues().Set(float64(m.DownloadTotal))
 		activeConnections.WithLabelValues().Set(float64(len(m.Connections)))
-
 		activeConnectionsMap := make(map[string]interface{})
 		for _, connection := range m.Connections {
 			if _, ok := c.connectionCache[connection.ID]; !ok {
@@ -120,9 +148,9 @@ func (c *Connection) Collect(config CollectConfig) error {
 			if !config.CollectDest {
 				destination = ""
 			}
-			sourceHostName,_:= LookupHostnameWithCache(connection.Metadata.SourceIP)
-			networkTrafficTotal.WithLabelValues(connection.Metadata.SourceIP,sourceHostName, destination, connection.Chains[0], "download").Add(float64(connection.Download) - float64(c.connectionCache[connection.ID].Download))
-			networkTrafficTotal.WithLabelValues(connection.Metadata.SourceIP,sourceHostName, destination, connection.Chains[0], "upload").Add(float64(connection.Upload) - float64(c.connectionCache[connection.ID].Upload))
+			sourceHostName, _ := LookupHostnameWithCache(connection.Metadata.SourceIP)
+			networkTrafficTotal.WithLabelValues(connection.Metadata.SourceIP, sourceHostName, destination, connection.Chains[0], "download").Add(float64(connection.Download) - float64(c.connectionCache[connection.ID].Download))
+			networkTrafficTotal.WithLabelValues(connection.Metadata.SourceIP, sourceHostName, destination, connection.Chains[0], "upload").Add(float64(connection.Upload) - float64(c.connectionCache[connection.ID].Upload))
 			c.connectionCache[connection.ID] = connection
 			activeConnectionsMap[connection.ID] = nil
 		}
@@ -167,11 +195,13 @@ func init() {
 			Name:      "network_traffic_bytes_total",
 			Help:      "Total number of bytes downloaded/uploaded, categorized by source, destination, and policy.",
 		},
-		[]string{"source","source_name", "destination", "policy", "type"},
+		[]string{"source", "source_name", "destination", "policy", "type"},
 	)
 
 	prometheus.MustRegister(uploadTotal, downloadTotal, activeConnections, networkTrafficTotal)
 
 	c := &Connection{connectionCache: map[string]Connections{}}
 	Register(c)
+	// 启动缓存清理，例如每1分钟清理一次
+	StartCacheCleanup(1 * time.Minute)
 }
